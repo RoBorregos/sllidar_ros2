@@ -328,13 +328,13 @@ public:
         }
         if (SL_IS_FAIL((drv)->connect(_channel))) {
             if(channel_type == "tcp"){
-                RCLCPP_ERROR(this->get_logger(),"Error, cannot connect to the ip addr  %s with the tcp port %s.",tcp_ip.c_str(),std::to_string(tcp_port).c_str());
+                RCLCPP_FATAL(this->get_logger(),"Error, cannot connect to the ip addr  %s with the tcp port %s.",tcp_ip.c_str(),std::to_string(tcp_port).c_str());
             }
             else if(channel_type == "udp"){
-                RCLCPP_ERROR(this->get_logger(),"Error, cannot connect to the ip addr  %s with the udp port %s.",udp_ip.c_str(),std::to_string(udp_port).c_str());
+                RCLCPP_FATAL(this->get_logger(),"Error, cannot connect to the ip addr  %s with the udp port %s.",udp_ip.c_str(),std::to_string(udp_port).c_str());
             }
             else{
-                RCLCPP_ERROR(this->get_logger(),"Error, cannot bind to the specified serial port %s.",serial_port.c_str());            
+                RCLCPP_FATAL(this->get_logger(),"Error, cannot bind to the specified serial port %s.",serial_port.c_str());            
             }
             delete drv;
             return -1;
@@ -342,11 +342,15 @@ public:
         
         // get sllidar device info
         if (!getSLLIDARDeviceInfo(drv)) {
+            RCLCPP_FATAL(this->get_logger(),"SLLIDAR: Cannot retrieve device info. Killing node.");
+            delete drv;
             return -1;
         }
 
         // check health...
         if (!checkSLLIDARHealth(drv)) {
+            RCLCPP_FATAL(this->get_logger(),"SLLIDAR: Health status check failed. Please reboot the device. Killing node.");
+            delete drv;
             return -1;
         }
 
@@ -405,6 +409,9 @@ public:
         rclcpp::Time start_scan_time;
         rclcpp::Time end_scan_time;
         double scan_duration;
+        int consecutive_errors = 0;
+        const int max_consecutive_errors = 10;
+
         while (rclcpp::ok() && !need_exit) {
             sl_lidar_response_measurement_node_hq_t nodes[8192];
             size_t   count = _countof(nodes);
@@ -415,6 +422,7 @@ public:
             scan_duration = (end_scan_time - start_scan_time).seconds();
 
             if (op_result == SL_RESULT_OK) {
+                consecutive_errors = 0;
                 op_result = drv->ascendScanData(nodes, count);
                 float angle_min = DEG2RAD(0.0f);
                 float angle_max = DEG2RAD(360.0f);
@@ -476,6 +484,12 @@ public:
                                 start_scan_time, scan_duration, inverted,
                                 angle_min, angle_max, max_distance,
                                 frame_id);
+                }
+            } else {
+                consecutive_errors++;
+                if (consecutive_errors > max_consecutive_errors) {
+                    RCLCPP_FATAL(this->get_logger(), "SLLIDAR: Too many consecutive errors. Killing node.");
+                    break; 
                 }
             }
 

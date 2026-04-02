@@ -39,12 +39,17 @@
 #include "math.h"
 
 #include <signal.h>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <limits>
 
 #ifndef _countof
 #define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
 #endif
 
 #define DEG2RAD(x) ((x)*M_PI/180.)
+#define RAD2DEG(x) ((x)*180./M_PI)
 
 #define ROS2VERSION "1.0.1"
 
@@ -78,6 +83,8 @@ class SLlidarNode : public rclcpp::Node
         this->declare_parameter<bool>("angle_compensate", false);
         this->declare_parameter<std::string>("scan_mode",std::string());
         this->declare_parameter<float>("scan_frequency",10);
+        this->declare_parameter<std::string>("ignore_array", "");
+        this->declare_parameter<double>("min_range", 0.05);
         
         this->get_parameter_or<std::string>("channel_type", channel_type, "serial");
         this->get_parameter_or<std::string>("tcp_ip", tcp_ip, "192.168.0.7"); 
@@ -94,6 +101,27 @@ class SLlidarNode : public rclcpp::Node
             this->get_parameter_or<float>("scan_frequency", scan_frequency, 20.0);
         else
             this->get_parameter_or<float>("scan_frequency", scan_frequency, 10.0);
+
+        // Parse ignore_array and min_range for laser filtering
+        std::string ignore_list;
+        this->get_parameter("ignore_array", ignore_list);
+        this->get_parameter("min_range", min_range_filter_);
+        ignore_array_ = split(ignore_list, ',');
+
+        if (ignore_array_.size() % 2 != 0) {
+            RCLCPP_ERROR(this->get_logger(), "ignore_array must have an even number of elements");
+            ignore_array_.clear();
+        }
+
+        for (const auto& degree : ignore_array_) {
+            if (degree < -180 || degree > 180) {
+                RCLCPP_ERROR(this->get_logger(), "ignore_array values should be between -180 and 180");
+            }
+        }
+
+        if (!ignore_list.empty()) {
+            RCLCPP_INFO(this->get_logger(), "Laser filtering enabled - ignore_array: %s, min_range: %f", ignore_list.c_str(), min_range_filter_);
+        }
     }
 
     bool getSLLIDARDeviceInfo(ILidarDriver * drv)
@@ -248,6 +276,28 @@ class SLlidarNode : public rclcpp::Node
                 else
                     scan_msg->ranges[node_count-1-i] = read_value;
                 scan_msg->intensities[node_count-1-i] = (float) (nodes[i].quality >> 2);
+            }
+        }
+
+        // Apply ignore_array and min_range filtering (merged from ignore_laser node)
+        if (!ignore_array_.empty() || min_range_filter_ > scan_msg->range_min) {
+            int range_count = static_cast<int>(scan_msg->ranges.size());
+            for (int i = 0; i < range_count; ++i) {
+                // Filter readings below minimum range
+                if (scan_msg->ranges[i] < min_range_filter_) {
+                    scan_msg->ranges[i] = std::numeric_limits<float>::infinity();
+                    continue;
+                }
+                // Filter readings within ignored angle ranges
+                if (!ignore_array_.empty()) {
+                    float degree = RAD2DEG(scan_msg->angle_min + scan_msg->angle_increment * i);
+                    for (size_t j = 0; j < ignore_array_.size(); j += 2) {
+                        if (ignore_array_[j] < degree && degree <= ignore_array_[j + 1]) {
+                            scan_msg->ranges[i] = std::numeric_limits<float>::infinity();
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -460,6 +510,23 @@ public:
     size_t angle_compensate_multiple = 1;//it stand of angle compensate at per 1 degree
     std::string scan_mode;
     float scan_frequency;
+
+    // Laser filtering parameters (from ignore_laser)
+    std::vector<double> ignore_array_;
+    double min_range_filter_ = 0.05;
+
+    std::vector<double> split(const std::string &s, char delim) const
+    {
+        std::vector<double> elems;
+        std::stringstream ss(s);
+        std::string number;
+        while (std::getline(ss, number, delim)) {
+            if (!number.empty()) {
+                elems.push_back(std::atof(number.c_str()));
+            }
+        }
+        return elems;
+    }
 
     ILidarDriver * drv;    
 };

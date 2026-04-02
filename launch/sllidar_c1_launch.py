@@ -18,6 +18,8 @@ def generate_launch_description():
     inverted = LaunchConfiguration('inverted', default='false')
     angle_compensate = LaunchConfiguration('angle_compensate', default='true')
     scan_mode = LaunchConfiguration('scan_mode', default='Standard')
+    ignore_array = LaunchConfiguration('ignore_array', default='')
+    min_range = LaunchConfiguration('min_range', default='0.05')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -55,17 +57,30 @@ def generate_launch_description():
             default_value=scan_mode,
             description='Specifying scan mode of lidar'),
 
+        DeclareLaunchArgument(
+            'ignore_array',
+            default_value=ignore_array,
+            description='Comma-separated pairs of angles (degrees) to ignore. E.g. "-40, -30, 30, 40" ignores [-40,-30] and [30,40]'),
+
+        DeclareLaunchArgument(
+            'min_range',
+            default_value=min_range,
+            description='Minimum range in meters. Readings below this are set to infinity'),
+
         Node(
             package='sllidar_ros2',
             executable='sllidar_node',
             name='sllidar_node',
-            parameters=[{'channel_type':channel_type,
+            parameters=[{'channel_type': channel_type,
                          'serial_port': serial_port, 
                          'serial_baudrate': serial_baudrate, 
                          'frame_id': frame_id,
                          'inverted': inverted, 
                          'angle_compensate': angle_compensate, 
-                         'scan_mode': scan_mode}],
+                         'scan_mode': scan_mode,
+                         'ignore_array': ignore_array,
+                         'min_range': min_range}],
             output='screen'),
     ])
+
 
